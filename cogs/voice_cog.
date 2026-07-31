@@ -1,0 +1,40 @@
+# ===============================================
+# cogs/voice_cog.py
+# 「🎤｜ボイス」チャンネルの「予約する」ボタンから、
+# 部屋タイプ・鍵・利用時間などを全て決めてからVCを作成します。
+# ロールごとの固定料金にも対応しています。
+# ===============================================
+
+import discord
+from discord.ext import commands, tasks
+from datetime import datetime, timedelta
+
+import config
+from utils.embeds import success_embed, error_embed, info_embed, main_embed
+from utils.logging_helper import send_voice_log
+
+
+def rate_column(hours: int) -> str:
+    return f"rate_{hours}"
+
+
+async def get_effective_rate(db, guild_id: int, member: discord.Member | None, column: str) -> int:
+    """
+    通常料金と、そのメンバーが持つロールの固定料金を比べて、
+    一番安い金額を返します。
+    """
+    settings = await db.get_guild_settings(guild_id)
+    candidates = [settings[column]]
+    if member is not None:
+        role_ids = [r.id for r in member.roles]
+        role_rows = await db.get_role_rates_for_roles(guild_id, role_ids)
+        for row in role_rows:
+            value = row[column]
+            if value is not None:
+                candidates.append(value)
+    return min(candidates)
+
+
+# ---------------------------------------------------
+# 🎤 ボイスチャンネル常設パネル
+# ---------------
