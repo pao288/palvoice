@@ -162,14 +162,21 @@ class DesignatedPlanView(discord.ui.View):
         owner = guild.get_member(self.owner_id) if guild else None
         price = await get_effective_rate(db, self.guild_id, owner, "monthly_rate")
 
-        async def do_purchase(confirm_interaction: discord.Interaction):
-            await _create_monthly_room(confirm_interaction.client, self.guild_id, self.owner_id, self.target_id, price, confirm_interaction)
+        async def show_confirm(modal_interaction: discord.Interaction, custom_name):
+            async def do_purchase(confirm_interaction: discord.Interaction):
+                await _create_monthly_room(
+                    confirm_interaction.client, self.guild_id, self.owner_id, self.target_id, price,
+                    custom_name, confirm_interaction
+                )
 
-        embed = info_embed(
-            "1か月プラン購入の確認",
-            f"料金: {price:,} PAL\n有効期間: 30日間\n\nこの内容で購入しますか?"
-        )
-        await interaction.response.edit_message(embed=embed, view=ConfirmView(do_purchase))
+            name_line = f"VC名: {custom_name}\n" if custom_name else ""
+            embed = info_embed(
+                "1か月プラン購入の確認",
+                f"{name_line}料金: {price:,} PAL\n有効期間: 30日間\n\nこの内容で購入しますか?"
+            )
+            await modal_interaction.response.edit_message(embed=embed, view=ConfirmView(do_purchase))
+
+        await interaction.response.send_modal(ChannelNameModal(show_confirm))
 
     @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -203,16 +210,37 @@ class DurationView(discord.ui.View):
         room_label = config.ROOM_TYPES[room_type]["label"]
         key_label = "鍵付き" if locked else "鍵なし"
 
-        async def do_create(confirm_interaction: discord.Interaction):
-            await _create_timed_vc(
-                confirm_interaction.client, guild_id, owner_id, room_type, locked, target_id, hours, price, confirm_interaction
-            )
+        async def show_confirm(modal_interaction: discord.Interaction, custom_name):
+            async def do_create(confirm_interaction: discord.Interaction):
+                await _create_timed_vc(
+                    confirm_interaction.client, guild_id, owner_id, room_type, locked, target_id, hours, price,
+                    custom_name, confirm_interaction
+                )
 
-        embed = info_embed(
-            "VC作成内容の確認",
-            f"部屋タイプ: {room_label}\n鍵: {key_label}\n利用時間: {hours}時間\n料金: {price:,} PAL\n\nこの内容で作成しますか?"
+            name_line = f"VC名: {custom_name}\n" if custom_name else ""
+            embed = info_embed(
+                "VC作成内容の確認",
+                f"部屋タイプ: {room_label}\n鍵: {key_label}\n利用時間: {hours}時間\n{name_line}料金: {price:,} PAL\n\nこの内容で作成しますか?"
+            )
+            await modal_interaction.response.edit_message(embed=embed, view=ConfirmView(do_create))
+
+        await interaction.response.send_modal(ChannelNameModal(show_confirm))
+
+
+class ChannelNameModal(discord.ui.Modal, title="VC名を入力"):
+    def __init__(self, next_step):
+        super().__init__()
+        self.next_step = next_step
+        self.name_input = discord.ui.TextInput(
+            label="VC名(空欄なら自動で名付けます)",
+            required=False,
+            max_length=90,
         )
-        await interaction.response.edit_message(embed=embed, view=ConfirmView(do_create))
+        self.add_item(self.name_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        custom_name = self.name_input.value.strip() or None
+        await self.next_step(interaction, custom_name)
 
 
 class ConfirmView(discord.ui.View):
@@ -250,7 +278,7 @@ async def _build_overwrites(guild: discord.Guild, owner: discord.Member, locked:
     return overwrites
 
 
-async def _create_timed_vc(bot, guild_id, owner_id, room_type, locked, target_id, hours, price, interaction):
+async def _create_timed_vc(bot, guild_id, owner_id, room_type, locked, target_id, hours, price, custom_name, interaction):
     db = bot.db
     guild = bot.get_guild(guild_id)
     if guild is None:
@@ -283,7 +311,11 @@ async def _create_timed_vc(bot, guild_id, owner_id, room_type, locked, target_id
 
     room_label = config.ROOM_TYPES[room_type]["label"]
     limit = config.ROOM_TYPES[room_type]["limit"]
-    channel_name = f"{'🔒' if locked else '🔊'}｜{room_label}｜{owner.display_name}"[:100]
+    icon = "🔒" if locked else "🔊"
+    if custom_name:
+        channel_name = f"{icon}｜{custom_name}"[:100]
+    else:
+        channel_name = f"{icon}｜{room_label}｜{owner.display_name}"[:100]
 
     new_channel = await guild.create_voice_channel(
         channel_name, category=category, overwrites=overwrites, user_limit=limit
@@ -324,7 +356,7 @@ async def _create_timed_vc(bot, guild_id, owner_id, room_type, locked, target_id
     )
 
 
-async def _create_monthly_room(bot, guild_id, owner_id, target_id, price, interaction):
+async def _create_monthly_room(bot, guild_id, owner_id, target_id, price, custom_name, interaction):
     db = bot.db
     guild = bot.get_guild(guild_id)
     if guild is None:
@@ -352,7 +384,10 @@ async def _create_monthly_room(bot, guild_id, owner_id, target_id, price, intera
     category = guild.get_channel(settings["category_id"])
     overwrites = await _build_overwrites(guild, owner, True, target_member)
 
-    channel_name = f"🔒｜指定個室(月額)｜{owner.display_name}"[:100]
+    if custom_name:
+        channel_name = f"🔒｜{custom_name}"[:100]
+    else:
+        channel_name = f"🔒｜指定個室(月額)｜{owner.display_name}"[:100]
     new_channel = await guild.create_voice_channel(
         channel_name, category=category, overwrites=overwrites, user_limit=2
     )
@@ -378,20 +413,29 @@ async def _create_monthly_room(bot, guild_id, owner_id, target_id, price, intera
     await send_voice_log(bot, guild_id, "指定個室1か月プラン購入", owner_id, target_id=target_id, amount=price)
 
 
-async def _calculate_refund(row) -> int:
+async def _calculate_refund(bot, db, row) -> int:
     """
-    実際の利用時間に応じて、未使用分の金額を計算します。
-    (現在支払い済みの期間のうち、まだ使っていない割合を返金します)
+    実際に使った時間がちょうど収まる「一番小さい時間プラン」の料金へ
+    変更したものとして計算し、既に払った分との差額を返金します。
+    (例: 24時間プランで2時間しか使わなかった場合、3時間プランの料金との差額を返金)
     """
     now = datetime.utcnow()
-    total_period = (row["expires_at"] - row["started_at"]).total_seconds()
-    if total_period <= 0:
-        return 0
-    elapsed = (now - row["started_at"]).total_seconds()
-    elapsed = max(0, min(elapsed, total_period))
-    used_ratio = elapsed / total_period
-    used_cost = round(row["total_charged"] * used_ratio)
-    refund = max(row["total_charged"] - used_cost, 0)
+    elapsed_hours = (now - row["started_at"]).total_seconds() / 3600
+    elapsed_hours = max(0, elapsed_hours)
+
+    guild = bot.get_guild(row["guild_id"])
+    owner_member = guild.get_member(row["owner_id"]) if guild else None
+
+    fitting_hours = None
+    for hours in config.DURATION_HOURS:
+        if hours >= elapsed_hours:
+            fitting_hours = hours
+            break
+    if fitting_hours is None:
+        fitting_hours = config.DURATION_HOURS[-1]
+
+    correct_price = await get_effective_rate(db, row["guild_id"], owner_member, rate_column(fitting_hours))
+    refund = max(row["total_charged"] - correct_price, 0)
     return refund
 
 
@@ -417,7 +461,7 @@ class CheckoutView(discord.ui.View):
             await interaction.followup.send(embed=error_embed("権限エラー", "チェックアウトできるのは作成者か管理者のみです。"), ephemeral=True)
             return
 
-        refund = await _calculate_refund(row)
+        refund = await _calculate_refund(interaction.client, db, row)
         embed = info_embed(
             "チェックアウトの確認",
             f"未使用分として {refund:,} PAL が返金されます。\nこのVCを終了しますか?"
@@ -429,14 +473,14 @@ class CheckoutView(discord.ui.View):
             if latest is None:
                 await confirm_interaction.edit_original_response(embed=error_embed("エラー", "既に終了しています。"), view=None)
                 return
-            actual_refund = await _calculate_refund(latest)
+            actual_refund = await _calculate_refund(confirm_interaction.client, db, latest)
             if actual_refund > 0:
                 await db.change_pal(latest["owner_id"], actual_refund)
             await db.delete_active_vc(latest["id"])
 
             channel = confirm_interaction.client.get_channel(latest["channel_id"])
             await confirm_interaction.edit_original_response(
-                embed=success_embed("チェックアウトしました", f"{actual_refund:,} PAL を返金しました。まもなくVCが削除されます。"),
+                embed=success_embed("チェックアウトしました", f"{actual_refund:,} PAL を返金しました。VCを削除します。"),
                 view=None,
             )
             await send_voice_log(
