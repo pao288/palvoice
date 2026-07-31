@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from database import Database
 from cogs.admin_cog import VoiceAdminPanelView
+from cogs.voice_cog import BookingPanelView
 
 load_dotenv()
 
@@ -31,10 +32,14 @@ class PalVoiceBot(commands.Bot):
         await self.db.connect(DATABASE_URL)
 
         self.add_view(VoiceAdminPanelView())
+        self.add_view(BookingPanelView())
 
         await self.load_extension("cogs.setup_cog")
         await self.load_extension("cogs.voice_cog")
         await self.load_extension("cogs.admin_cog")
+
+        from cogs.voice_cog import register_active_views
+        await register_active_views(self)
 
         await self.tree.sync()
 

@@ -7,7 +7,6 @@ CATEGORY_NAME = "🎤 PAL VOICE"
 CHANNEL_VOICE_TEXT = "🎤｜ボイス"
 CHANNEL_ADMIN = "👑｜VOICE管理"
 CHANNEL_LOG = "📋｜VOICEログ"
-CREATE_VC_NAME = "➕｜VCを作成"
 
 # ---- 部屋タイプ ----
 # key: 内部で使う名前 / label: 表示名 / limit: 人数上限 / lockable: 鍵付きにできるか

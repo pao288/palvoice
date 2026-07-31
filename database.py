@@ -77,6 +77,24 @@ class Database:
                 );
             """)
 
+            # ロールごとの固定料金(設定されている項目だけ通常料金より優先されます)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS role_rates (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    role_id BIGINT NOT NULL,
+                    rate_3 BIGINT,
+                    rate_6 BIGINT,
+                    rate_8 BIGINT,
+                    rate_12 BIGINT,
+                    rate_18 BIGINT,
+                    rate_24 BIGINT,
+                    extend_rate BIGINT,
+                    monthly_rate BIGINT,
+                    UNIQUE(guild_id, role_id)
+                );
+            """)
+
             # 指定個室の1か月プラン(通常のVCとは別管理・期限のみで削除)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS monthly_rooms (
@@ -159,6 +177,10 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow("SELECT * FROM active_vcs WHERE channel_id=$1;", channel_id)
 
+    async def get_active_vc_by_id(self, vc_id: int):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow("SELECT * FROM active_vcs WHERE id=$1;", vc_id)
+
     async def get_all_active_vcs(self):
         async with self.pool.acquire() as conn:
             return await conn.fetch("SELECT * FROM active_vcs;")
@@ -176,6 +198,48 @@ class Database:
     async def delete_active_vc(self, vc_id: int):
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM active_vcs WHERE id=$1;", vc_id)
+
+    # ---------- role_rates(ロール別固定料金) ----------
+    async def ensure_role_rate(self, guild_id: int, role_id: int):
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO role_rates (guild_id, role_id) VALUES ($1,$2)
+                ON CONFLICT (guild_id, role_id) DO NOTHING;
+            """, guild_id, role_id)
+
+    async def get_role_rate(self, guild_id: int, role_id: int):
+        await self.ensure_role_rate(guild_id, role_id)
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow("SELECT * FROM role_rates WHERE guild_id=$1 AND role_id=$2;", guild_id, role_id)
+
+    async def update_role_rate(self, guild_id: int, role_id: int, **kwargs):
+        if not kwargs:
+            return
+        await self.ensure_role_rate(guild_id, role_id)
+        columns = list(kwargs.keys())
+        values = list(kwargs.values())
+        set_clause = ", ".join(f"{col}=${i+3}" for i, col in enumerate(columns))
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                f"UPDATE role_rates SET {set_clause} WHERE guild_id=$1 AND role_id=$2;",
+                guild_id, role_id, *values
+            )
+
+    async def get_role_rates_for_roles(self, guild_id: int, role_ids: list):
+        if not role_ids:
+            return []
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(
+                "SELECT * FROM role_rates WHERE guild_id=$1 AND role_id = ANY($2::bigint[]);", guild_id, role_ids
+            )
+
+    async def list_role_rates(self, guild_id: int):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch("SELECT * FROM role_rates WHERE guild_id=$1;", guild_id)
+
+    async def delete_role_rate(self, guild_id: int, role_id: int):
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM role_rates WHERE guild_id=$1 AND role_id=$2;", guild_id, role_id)
 
     # ---------- monthly_rooms ----------
     async def create_monthly_room(self, guild_id, channel_id, owner_id, designated_user_id, expires_at):
